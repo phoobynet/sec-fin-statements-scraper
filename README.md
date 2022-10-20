@@ -15,5 +15,9 @@ func main () {
     
 	// file dumped to ~/2022q2.db
     err := sc.Load(2022, 2)
+	
+    if err != nil {
+        log.Fatal(err)	
+    }
 }
 ```
