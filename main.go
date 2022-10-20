@@ -64,36 +64,37 @@ func (f *FinStatementsScraper) Load(year int, quarter string) error {
 
 	if link, ok := f.links[title]; !ok {
 		f.importFile(link)
+		return nil
+	} else {
+		return errors.New("link not found")
 	}
-
-	return errors.New("not implemented")
 }
 
 func (f *FinStatementsScraper) importFile(url *url.URL) {
 	sourceZipFileName := strings.TrimSuffix(getFileName(url), ".zip")
-	sourceZipTempFile, err := os.CreateTemp(os.TempDir(), sourceZipFileName)
+	sourceZipTempFile, createTempErr := os.CreateTemp(os.TempDir(), sourceZipFileName)
 	defer func(name string) {
 		_ = os.Remove(name)
 	}(sourceZipTempFile.Name())
 
-	if err != nil {
-		log.Fatalln(err)
+	if createTempErr != nil {
+		log.Fatalln(createTempErr)
 	}
 
-	zipFileResponse, err := http.Get(url.String())
+	zipFileResponse, httpGetErr := http.Get(url.String())
 	defer func(Body io.ReadCloser) {
 		_ = Body.Close()
 	}(zipFileResponse.Body)
 
-	if err != nil {
-		log.Fatalln(err)
+	if httpGetErr != nil {
+		log.Fatalln(httpGetErr)
 	}
 
 	if zipFileResponse.StatusCode == 200 {
-		_, err := io.Copy(sourceZipTempFile, zipFileResponse.Body)
+		_, copyErr := io.Copy(sourceZipTempFile, zipFileResponse.Body)
 
-		if err != nil {
-			log.Fatalln(err)
+		if copyErr != nil {
+			log.Fatalln(copyErr)
 		}
 	}
 
@@ -103,6 +104,7 @@ func (f *FinStatementsScraper) importFile(url *url.URL) {
 		log.Fatalln(err)
 	}
 
+	// for each file, unzip and import into the database
 	for _, fileInZip := range zipFile.File {
 		func() {
 			zippedFile, fileOpenErr := fileInZip.Open()
@@ -111,23 +113,24 @@ func (f *FinStatementsScraper) importFile(url *url.URL) {
 				log.Fatalln(fileOpenErr)
 			}
 
-			txtFile, createTempErr := os.CreateTemp(os.TempDir(), fileInZip.Name)
+			txtTableTempFile, createTableTempErr := os.CreateTemp(os.TempDir(), fileInZip.Name)
 
-			if createTempErr != nil {
-				log.Fatalln(createTempErr)
+			if createTableTempErr != nil {
+				log.Fatalln(createTableTempErr)
 			}
 
 			defer func(txtFile *os.File) {
 				_ = txtFile.Close()
-			}(txtFile)
+				_ = os.Remove(txtFile.Name())
+			}(txtTableTempFile)
 
-			_, copyErr := io.Copy(txtFile, zippedFile)
+			_, copyErr := io.Copy(txtTableTempFile, zippedFile)
 
 			if copyErr != nil {
 				log.Fatalln(copyErr)
 			}
 
-			importErr := f.importIntoSQLite(f.config.databasePath, txtFile.Name())
+			importErr := f.importIntoSQLite(txtTableTempFile.Name())
 
 			if importErr != nil {
 				log.Fatalln(importErr)
@@ -136,9 +139,9 @@ func (f *FinStatementsScraper) importFile(url *url.URL) {
 	}
 }
 
-func (f *FinStatementsScraper) importIntoSQLite(dbPath string, txtPath string) error {
+func (f *FinStatementsScraper) importIntoSQLite(txtPath string) error {
 	tableName := strings.TrimSuffix(txtPath, ".txt")
-	cmd := exec.Command("sqlite3", dbPath, "-tabs", "-cmd", fmt.Sprintf(".import %s %s", txtPath, tableName))
+	cmd := exec.Command("sqlite3", f.config.databasePath, "-tabs", "-cmd", fmt.Sprintf(".import %s %s", txtPath, tableName))
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	err := cmd.Run()
