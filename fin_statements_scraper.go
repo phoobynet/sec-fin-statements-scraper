@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"errors"
 	"fmt"
-	"github.com/gocolly/colly"
 	"io"
 	"log"
 	"net/http"
@@ -45,7 +44,7 @@ func NewFinStatementsScraper(config *FinStatementsScraperConfig) (*FinStatements
 		return nil, fmt.Errorf("databasePath is not a directory: %w", err)
 	}
 
-	links, err := buildLinks(config.url)
+	links, err := getStatementLinks(config.url)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to build links: %w", err)
@@ -71,7 +70,7 @@ func (f *FinStatementsScraper) Load(year int, quarter string) error {
 }
 
 func (f *FinStatementsScraper) importFile(url *url.URL) {
-	sourceZipFileName := strings.TrimSuffix(getFileName(url), ".zip")
+	sourceZipFileName := strings.TrimSuffix(parseFileName(url), ".zip")
 	sourceZipTempFile, createTempErr := os.CreateTemp(os.TempDir(), sourceZipFileName)
 	defer func(name string) {
 		_ = os.Remove(name)
@@ -150,47 +149,4 @@ func (f *FinStatementsScraper) importIntoSQLite(txtPath string) error {
 	}
 
 	return nil
-}
-
-func getFileName(u *url.URL) string {
-	parts := strings.Split(u.String(), "/")
-
-	return parts[len(parts)-1]
-}
-
-func buildLinks(sourceURL *url.URL) (map[string]*url.URL, error) {
-	c := colly.NewCollector()
-
-	linkBaseURL := fmt.Sprintf("%s://%s", sourceURL.Scheme, sourceURL.Host)
-
-	links := make(map[string]*url.URL, 0)
-
-	c.OnHTML("table.list tbody", func(e *colly.HTMLElement) {
-		e.ForEach("tr", func(_ int, tr *colly.HTMLElement) {
-			link := tr.ChildAttr("a", "href")
-			title := tr.ChildText("a")
-
-			fullURLString, err := url.JoinPath(linkBaseURL, link)
-
-			if err != nil {
-				log.Fatalln(err)
-			}
-
-			fullURL, err := url.Parse(fullURLString)
-
-			if err != nil {
-				log.Fatalln(err)
-			}
-
-			links[title] = fullURL
-		})
-	})
-
-	err := c.Visit(sourceURL.String())
-
-	if err != nil {
-		return nil, err
-	}
-
-	return links, nil
 }
