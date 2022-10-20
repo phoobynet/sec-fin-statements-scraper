@@ -2,7 +2,6 @@ package scraper
 
 import (
 	"archive/zip"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -15,28 +14,28 @@ import (
 )
 
 type FinStatementsScraperConfig struct {
-	url          *url.URL
-	databasePath string
+	SourceURL    *url.URL // optional - defaults to https://www.sec.gov/dera/data/financial-statement-data-sets.html
+	DatabasePath string   // the directory where the database will be created
 }
 
 type FinStatementsScraper struct {
 	config *FinStatementsScraperConfig
-	links  map[string]*url.URL
+	links  *statementLinks
 }
 
 func NewFinStatementsScraper(config *FinStatementsScraperConfig) (*FinStatementsScraper, error) {
-	if config.url == nil {
+	if config.SourceURL == nil {
 		u, err := url.Parse("https://www.sec.gov/dera/data/financial-statement-data-sets.html")
 
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse url: %w", err)
 		}
 
-		config.url = u
+		config.SourceURL = u
 	}
 
 	// if the database does not exist, then it will be created
-	databaseDir := filepath.Dir(config.databasePath)
+	databaseDir := filepath.Dir(config.DatabasePath)
 
 	if s, err := os.Stat(databaseDir); os.IsNotExist(err) {
 		return nil, fmt.Errorf("databasePath does not exist: %w", err)
@@ -44,7 +43,7 @@ func NewFinStatementsScraper(config *FinStatementsScraperConfig) (*FinStatements
 		return nil, fmt.Errorf("databasePath is not a directory: %w", err)
 	}
 
-	links, err := getStatementLinks(config.url)
+	links, err := newStatementLinks(config.SourceURL)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to build links: %w", err)
@@ -58,19 +57,20 @@ func NewFinStatementsScraper(config *FinStatementsScraperConfig) (*FinStatements
 	return f, nil
 }
 
-func (f *FinStatementsScraper) Load(year int, quarter string) error {
-	title := fmt.Sprintf("%d %s", year, quarter)
+func (f *FinStatementsScraper) Load(year int, quarter int) error {
+	link := f.links.Find(year, quarter)
 
-	if link, ok := f.links[title]; !ok {
-		f.importFile(link)
-		return nil
-	} else {
-		return errors.New("link not found")
+	if link == nil {
+		return fmt.Errorf("no link found for year %d and quarter %d", year, quarter)
 	}
+
+	f.importFile(link)
+
+	return nil
 }
 
-func (f *FinStatementsScraper) importFile(url *url.URL) {
-	sourceZipFileName := strings.TrimSuffix(parseFileName(url), ".zip")
+func (f *FinStatementsScraper) importFile(link *statementLink) {
+	sourceZipFileName := strings.TrimSuffix(link.FileName, ".zip")
 	sourceZipTempFile, createTempErr := os.CreateTemp(os.TempDir(), sourceZipFileName)
 	defer func(name string) {
 		_ = os.Remove(name)
@@ -80,7 +80,7 @@ func (f *FinStatementsScraper) importFile(url *url.URL) {
 		log.Fatalln(createTempErr)
 	}
 
-	zipFileResponse, httpGetErr := http.Get(url.String())
+	zipFileResponse, httpGetErr := http.Get(link.StatementURL.String())
 	defer func(Body io.ReadCloser) {
 		_ = Body.Close()
 	}(zipFileResponse.Body)
@@ -140,7 +140,7 @@ func (f *FinStatementsScraper) importFile(url *url.URL) {
 
 func (f *FinStatementsScraper) importIntoSQLite(txtPath string) error {
 	tableName := strings.TrimSuffix(txtPath, ".txt")
-	cmd := exec.Command("sqlite3", f.config.databasePath, "-tabs", "-cmd", fmt.Sprintf(".import %s %s", txtPath, tableName))
+	cmd := exec.Command("sqlite3", f.config.DatabasePath, "-tabs", "-cmd", fmt.Sprintf(".import %s %s", txtPath, tableName))
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	err := cmd.Run()
