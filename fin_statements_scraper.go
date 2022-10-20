@@ -64,12 +64,12 @@ func (f *FinStatementsScraper) Load(year int, quarter int) error {
 		return fmt.Errorf("no link found for year %d and quarter %d", year, quarter)
 	}
 
-	f.importFile(link)
+	f.importFile(link, fmt.Sprintf("%dq%d.db", year, quarter))
 
 	return nil
 }
 
-func (f *FinStatementsScraper) importFile(link *statementLink) {
+func (f *FinStatementsScraper) importFile(link *statementLink, databaseFileName string) {
 	sourceZipFileName := strings.TrimSuffix(link.FileName, ".zip")
 	sourceZipTempFile, createTempErr := os.CreateTemp(os.TempDir(), sourceZipFileName)
 	defer func(name string) {
@@ -79,6 +79,8 @@ func (f *FinStatementsScraper) importFile(link *statementLink) {
 	if createTempErr != nil {
 		log.Fatalln(createTempErr)
 	}
+
+	log.Printf("downloading from %s...", link.StatementURL.String())
 
 	zipFileResponse, httpGetErr := http.Get(link.StatementURL.String())
 	defer func(Body io.ReadCloser) {
@@ -97,6 +99,8 @@ func (f *FinStatementsScraper) importFile(link *statementLink) {
 		}
 	}
 
+	log.Printf("downloading from %s...DONE", link.StatementURL.String())
+
 	zipFile, err := zip.OpenReader(sourceZipTempFile.Name())
 
 	if err != nil {
@@ -105,6 +109,10 @@ func (f *FinStatementsScraper) importFile(link *statementLink) {
 
 	// for each file, unzip and import into the database
 	for _, fileInZip := range zipFile.File {
+		if strings.HasSuffix(fileInZip.Name, "readme.htm") {
+			continue
+		}
+
 		func() {
 			zippedFile, fileOpenErr := fileInZip.Open()
 
@@ -129,7 +137,9 @@ func (f *FinStatementsScraper) importFile(link *statementLink) {
 				log.Fatalln(copyErr)
 			}
 
-			importErr := f.importIntoSQLite(txtTableTempFile.Name())
+			log.Printf("importing %s into %s...", fileInZip.Name, databaseFileName)
+
+			importErr := f.importIntoSQLite(fileInZip.Name, txtTableTempFile.Name(), databaseFileName)
 
 			if importErr != nil {
 				log.Fatalln(importErr)
@@ -138,9 +148,9 @@ func (f *FinStatementsScraper) importFile(link *statementLink) {
 	}
 }
 
-func (f *FinStatementsScraper) importIntoSQLite(txtPath string) error {
-	tableName := strings.TrimSuffix(txtPath, ".txt")
-	cmd := exec.Command("sqlite3", f.config.DatabasePath, "-tabs", "-cmd", fmt.Sprintf(".import %s %s", txtPath, tableName))
+func (f *FinStatementsScraper) importIntoSQLite(zipFileName string, txtPath string, databaseFileName string) error {
+	tableName := strings.TrimSuffix(zipFileName, ".txt")
+	cmd := exec.Command("sqlite3", filepath.Join(f.config.DatabasePath, databaseFileName), "-tabs", "-cmd", fmt.Sprintf(".import %s %s", txtPath, tableName))
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	err := cmd.Run()

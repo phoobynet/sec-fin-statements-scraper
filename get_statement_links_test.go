@@ -20,5 +20,4 @@ func TestBuildLinks(t *testing.T) {
 	}
 
 	spew.Dump(statementsLinks)
-
 }
