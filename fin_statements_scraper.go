@@ -34,6 +34,10 @@ func NewFinStatementsScraper(config *FinStatementsScraperConfig) (*FinStatements
 		config.SourceURL = u
 	}
 
+	if !isValidDir(config.DatabasePath) {
+		log.Fatalln("invalid database path")
+	}
+
 	// if the database does not exist, then it will be created
 	databaseDir := filepath.Dir(config.DatabasePath)
 
@@ -159,4 +163,26 @@ func (f *FinStatementsScraper) importIntoSQLite(zipFileName string, txtPath stri
 	}
 
 	return nil
+}
+
+func isValidDir(databasePath string) bool {
+	if strings.HasSuffix(databasePath, ".db") || strings.HasSuffix(databasePath, ".sqlite") {
+		_, err := os.Stat(databasePath)
+
+		if err != nil {
+			if !os.IsNotExist(err) {
+				return false
+			} else {
+				return true
+			}
+		} else {
+			return true
+		}
+	}
+
+	if _, err := os.Stat(databasePath); os.IsNotExist(err) {
+		return false
+	} else {
+		return true
+	}
 }
