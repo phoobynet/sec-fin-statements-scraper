@@ -86,6 +86,14 @@ func (s *statementLinks) Get() []statementLink {
 	return s.Links
 }
 
+func (s *statementLinks) Latest() *statementLink {
+	if len(s.Links) == 0 {
+		return nil
+	}
+
+	return &s.Links[0]
+}
+
 func (s *statementLinks) Find(year int, quarter int) *statementLink {
 	for _, link := range s.Links {
 		if link.Year == year && link.Quarter == quarter {

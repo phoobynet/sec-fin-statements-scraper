@@ -73,6 +73,18 @@ func (f *FinStatementsScraper) Load(year int, quarter int) error {
 	return nil
 }
 
+func (f *FinStatementsScraper) LoadLatest() error {
+	link := f.links.Latest()
+
+	if link == nil {
+		return fmt.Errorf("no link found for latest")
+	}
+
+	f.importFile(link, fmt.Sprintf("%dq%d.db", link.Year, link.Quarter))
+
+	return nil
+}
+
 func (f *FinStatementsScraper) importFile(link *statementLink, databaseFileName string) {
 	sourceZipFileName := strings.TrimSuffix(link.FileName, ".zip")
 	sourceZipTempFile, createTempErr := os.CreateTemp(os.TempDir(), sourceZipFileName)
