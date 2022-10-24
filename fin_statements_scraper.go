@@ -20,7 +20,7 @@ type FinStatementsScraperConfig struct {
 
 type FinStatementsScraper struct {
 	config *FinStatementsScraperConfig
-	links  *statementLinks
+	Links  *statementLinks
 }
 
 func NewFinStatementsScraper(config *FinStatementsScraperConfig) (*FinStatementsScraper, error) {
@@ -55,14 +55,14 @@ func NewFinStatementsScraper(config *FinStatementsScraperConfig) (*FinStatements
 
 	f := &FinStatementsScraper{
 		config: config,
-		links:  links,
+		Links:  links,
 	}
 
 	return f, nil
 }
 
 func (f *FinStatementsScraper) Load(year int, quarter int) error {
-	link := f.links.Find(year, quarter)
+	link := f.Links.Find(year, quarter)
 
 	if link == nil {
 		return fmt.Errorf("no link found for year %d and quarter %d", year, quarter)
@@ -74,7 +74,7 @@ func (f *FinStatementsScraper) Load(year int, quarter int) error {
 }
 
 func (f *FinStatementsScraper) LoadLatest() error {
-	link := f.links.Latest()
+	link := f.Links.Latest()
 
 	if link == nil {
 		return fmt.Errorf("no link found for latest")
