@@ -21,9 +21,11 @@ type FinStatementsScraperConfig struct {
 type FinStatementsScraper struct {
 	config *FinStatementsScraperConfig
 	Links  *statementLinks
+	isFile bool
+	log    chan string
 }
 
-func NewFinStatementsScraper(config *FinStatementsScraperConfig) (*FinStatementsScraper, error) {
+func NewFinStatementsScraper(config *FinStatementsScraperConfig, log chan string) (*FinStatementsScraper, error) {
 	if config.SourceURL == nil {
 		u, err := url.Parse("https://www.sec.gov/dera/data/financial-statement-data-sets.html")
 
@@ -34,17 +36,16 @@ func NewFinStatementsScraper(config *FinStatementsScraperConfig) (*FinStatements
 		config.SourceURL = u
 	}
 
-	if !isValidDir(config.DatabasePath) {
-		log.Fatalln("invalid database path")
-	}
+	_, statErr := os.Stat(config.DatabasePath)
 
-	// if the database does not exist, then it will be created
-	databaseDir := filepath.Dir(config.DatabasePath)
+	if statErr != nil {
+		if os.IsNotExist(statErr) {
+			_, statErr = os.Stat(filepath.Dir(config.DatabasePath))
 
-	if s, err := os.Stat(databaseDir); os.IsNotExist(err) {
-		return nil, fmt.Errorf("databasePath does not exist: %w", err)
-	} else if !s.IsDir() {
-		return nil, fmt.Errorf("databasePath is not a directory: %w", err)
+			if os.IsNotExist(statErr) {
+				return nil, fmt.Errorf("database path does not exist: %w", statErr)
+			}
+		}
 	}
 
 	links, err := newStatementLinks(config.SourceURL)
@@ -56,6 +57,8 @@ func NewFinStatementsScraper(config *FinStatementsScraperConfig) (*FinStatements
 	f := &FinStatementsScraper{
 		config: config,
 		Links:  links,
+		isFile: strings.HasSuffix(config.DatabasePath, ".db") || strings.HasSuffix(config.DatabasePath, ".sqlite"),
+		log:    log,
 	}
 
 	return f, nil
@@ -96,7 +99,7 @@ func (f *FinStatementsScraper) importFile(link *statementLink, databaseFileName 
 		log.Fatalln(createTempErr)
 	}
 
-	log.Printf("downloading from %s...", link.StatementURL.String())
+	f.log <- fmt.Sprintf("downloading from %s...", link.StatementURL.String())
 
 	zipFileResponse, httpGetErr := http.Get(link.StatementURL.String())
 	defer func(Body io.ReadCloser) {
@@ -115,7 +118,7 @@ func (f *FinStatementsScraper) importFile(link *statementLink, databaseFileName 
 		}
 	}
 
-	log.Printf("downloading from %s...DONE", link.StatementURL.String())
+	f.log <- fmt.Sprintf("downloading from %s...DONE", link.StatementURL.String())
 
 	zipFile, err := zip.OpenReader(sourceZipTempFile.Name())
 
@@ -153,9 +156,17 @@ func (f *FinStatementsScraper) importFile(link *statementLink, databaseFileName 
 				log.Fatalln(copyErr)
 			}
 
-			log.Printf("importing %s into %s...", fileInZip.Name, databaseFileName)
+			var fullDatabasePath string
 
-			importErr := f.importIntoSQLite(fileInZip.Name, txtTableTempFile.Name(), databaseFileName)
+			if f.isFile {
+				fullDatabasePath = f.config.DatabasePath
+			} else {
+				fullDatabasePath = filepath.Join(f.config.DatabasePath, databaseFileName)
+			}
+
+			f.log <- fmt.Sprintf("importing %s into %s...", fileInZip.Name, fullDatabasePath)
+
+			importErr := f.importIntoSQLite(fileInZip.Name, txtTableTempFile.Name(), fullDatabasePath)
 
 			if importErr != nil {
 				log.Fatalln(importErr)
@@ -164,9 +175,10 @@ func (f *FinStatementsScraper) importFile(link *statementLink, databaseFileName 
 	}
 }
 
-func (f *FinStatementsScraper) importIntoSQLite(zipFileName string, txtPath string, databaseFileName string) error {
+func (f *FinStatementsScraper) importIntoSQLite(zipFileName string, txtPath string, fullDatabasePath string) error {
 	tableName := strings.TrimSuffix(zipFileName, ".txt")
-	cmd := exec.Command("sqlite3", filepath.Join(f.config.DatabasePath, databaseFileName), "-tabs", "-cmd", fmt.Sprintf(".import %s %s", txtPath, tableName))
+
+	cmd := exec.Command("sqlite3", fullDatabasePath, "-tabs", "-cmd", fmt.Sprintf(".import %s %s", txtPath, tableName))
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	err := cmd.Run()
@@ -175,26 +187,4 @@ func (f *FinStatementsScraper) importIntoSQLite(zipFileName string, txtPath stri
 	}
 
 	return nil
-}
-
-func isValidDir(databasePath string) bool {
-	if strings.HasSuffix(databasePath, ".db") || strings.HasSuffix(databasePath, ".sqlite") {
-		_, err := os.Stat(databasePath)
-
-		if err != nil {
-			if !os.IsNotExist(err) {
-				return false
-			} else {
-				return true
-			}
-		} else {
-			return true
-		}
-	}
-
-	if _, err := os.Stat(databasePath); os.IsNotExist(err) {
-		return false
-	} else {
-		return true
-	}
 }
